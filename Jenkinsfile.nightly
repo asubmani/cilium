@@ -84,6 +84,20 @@ pipeline {
                 }
             }
         }
+        stage('Make Cilium images') {
+            steps {
+                sh 'cd ${TESTDIR}; ./make-images-push-to-local-registry.sh $(./print-node-ip.sh) latest'
+            }
+            post {
+                unsuccessful {
+                    script {
+                        if  (!currentBuild.displayName.contains('fail')) {
+                            currentBuild.displayName = 'building or pushing Cilium images failed ' + currentBuild.displayName
+                        }
+                    }
+                }
+            }
+        }
         stage('Nightly-Tests') {
             environment {
                 K8S_NODES=4
@@ -91,6 +105,7 @@ pipeline {
                 VM_MEMORY=4096
                 VM_CPUS=4
                 FAILFAST=setIfLabel("ci/fail-fast", "true", "false")
+                KUBECONFIG="vagrant-kubeconfig"
             }
 
             options {
@@ -98,11 +113,10 @@ pipeline {
             }
 
             steps {
-                parallel(
-                    "Nightly":{
-                        sh 'cd ${TESTDIR}; ginkgo --focus="Nightly*" -v --failFast=${FAILFAST} -- -cilium.timeout=450m'
-                    },
-                )
+                dir("${TESTDIR}"){
+                    sh './vagrant-ci-start.sh'
+                    sh 'ginkgo --focus="$(echo ${ghprbCommentBody} | sed -r "s/([^ ]* |^[^ ]*$)//" | sed "s/^$/Nightly*/")" -v --failFast=${FAILFAST} -- -cilium.timeout=450m -cilium.provision=false -cilium.kubeconfig=${TESTDIR}/vagrant-kubeconfig -cilium.passCLIEnvironment=true -cilium.registry=$(./print-node-ip.sh)'
+                }
             }
             post {
                 always {
